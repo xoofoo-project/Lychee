@@ -1,30 +1,98 @@
 <?php
 
-/**
- * @name		Misc Module
- * @author		Philipp Maurer
- * @author		Tobias Reich
- * @copyright	2014 by Philipp Maurer, Tobias Reich
- */
+###
+# @name			Misc Module
+# @copyright	2015 by Tobias Reich
+###
 
 if (!defined('LYCHEE')) exit('Error: Direct access is not allowed!');
 
-function openGraphHeader($photoID) {
+function search($database, $settings, $term) {
 
-	global $database;
+	if (!isset($database, $settings, $term)) return false;
 
-	$photoID = mysqli_real_escape_string($database, $photoID);
+	$return['albums'] = '';
 
-	$result	= $database->query("SELECT title, description, url FROM lychee_photos WHERE id = '$photoID';");
+	# Initialize return var
+	$return = array(
+		'photos'	=> null,
+		'albums'	=> null,
+		'hash'		=> ''
+	);
+
+	###
+	# Photos
+	###
+
+	$query	= Database::prepare($database, "SELECT id, title, tags, public, star, album, thumbUrl, takestamp, url FROM ? WHERE title LIKE '%?%' OR description LIKE '%?%' OR tags LIKE '%?%'", array(LYCHEE_TABLE_PHOTOS, $term, $term, $term));
+	$result	= $database->query($query);
+
+	while($photo = $result->fetch_assoc()) {
+
+		$photo = Photo::prepareData($photo);
+		$return['photos'][$photo['id']] = $photo;
+
+	}
+
+	###
+	# Albums
+	###
+
+	$query	= Database::prepare($database, "SELECT id, title, public, sysstamp, password FROM ? WHERE title LIKE '%?%' OR description LIKE '%?%'", array(LYCHEE_TABLE_ALBUMS, $term, $term));
+	$result = $database->query($query);
+
+	while($album = $result->fetch_assoc()) {
+
+		# Turn data from the database into a front-end friendly format
+		$album = Album::prepareData($album);
+
+		# Thumbs
+		$query	= Database::prepare($database, "SELECT thumbUrl FROM ? WHERE album = '?' " . $settings['sortingPhotos'] . " LIMIT 0, 3", array(LYCHEE_TABLE_PHOTOS, $album['id']));
+		$thumbs	= $database->query($query);
+
+		# For each thumb
+		$k = 0;
+		while ($thumb = $thumbs->fetch_object()) {
+			$album['thumbs'][$k] = LYCHEE_URL_UPLOADS_THUMB . $thumb->thumbUrl;
+			$k++;
+		}
+
+		# Add to return
+		$return['albums'][$album['id']] = $album;
+
+	}
+
+	# Hash
+	$return['hash'] = md5(json_encode($return));
+
+	return $return;
+
+}
+
+function getGraphHeader($database, $photoID) {
+
+	if (!isset($database, $photoID)) return false;
+
+	$photo = new Photo($database, null, null, $photoID);
+	if ($photo->getPublic('')===false) return false;
+
+	$query	= Database::prepare($database, "SELECT title, description, url, medium FROM ? WHERE id = '?'", array(LYCHEE_TABLE_PHOTOS, $photoID));
+	$result	= $database->query($query);
 	$row	= $result->fetch_object();
 
-	$parseUrl	= parse_url("http://".$_SERVER['HTTP_HOST'].$_SERVER['REQUEST_URI']);
-	$picture	= $parseUrl['scheme']."://".$parseUrl['host'].$parseUrl['path']."/../uploads/big/".$row->url;
+	if (!$result||!$row) return false;
+
+	if ($row->medium==='1')	$dir = 'medium';
+	else					$dir = 'big';
+
+	$parseUrl	= parse_url('http://' . $_SERVER['HTTP_HOST'] . $_SERVER['REQUEST_URI']);
+	$url		= $parseUrl['scheme'] . '://' . $parseUrl['host'] . $parseUrl['path'] . '?' . $parseUrl['query'];
+	$picture	= $parseUrl['scheme'] . '://' . $parseUrl['host'] . $parseUrl['path'] . '/../uploads/' . $dir . '/' . $row->url;
 
 	$return = '<!-- General Meta Data -->';
-	$return .= '<meta name="title" content="'.$row->title.'" />';
-	$return .= '<meta name="description" content="'.$row->description.' - via Lychee" />';
-	$return .= '<link rel="image_src" type="image/jpeg" href="'.$picture.'" />';
+	$return .= '<meta name="title" content="'.$row->title.'">';
+	$return .= '<meta name="description" content="'.$row->description.' - via Lychee">';
+	$return .= '<link rel="image_src" type="image/jpeg" href="'.$picture.'">';
 
 	$return .= '<!-- Twitter Meta Data -->';
 	$return .= '<meta name="twitter:card" content="photo">';
@@ -34,76 +102,89 @@ function openGraphHeader($photoID) {
 	$return .= '<!-- Facebook Meta Data -->';
 	$return .= '<meta property="og:title" content="'.$row->title.'">';
 	$return .= '<meta property="og:image" content="'.$picture.'">';
+	$return .= '<meta property="og:description" content="'.$row->description.' - via Lychee">';
+	$return .= '<meta property="og:url" content="'.$url.'">';
 
 	return $return;
 
 }
 
-function search($term) {
+function getExtension($filename) {
 
-	global $database, $settings;
+	$extension = strpos($filename, '.') !== false
+		? strrchr($filename, '.')
+		: '';
 
-	$return['albums'] = '';
+	return $extension;
 
-	// Photos
-	$result = $database->query("SELECT id, title, tags, sysdate, public, star, album, thumbUrl FROM lychee_photos WHERE title like '%$term%' OR description like '%$term%' OR tags like '%$term%';");
-	while($row = $result->fetch_assoc()) {
-		$return['photos'][$row['id']]				= $row;
-		$return['photos'][$row['id']]['sysdate']	= date('d F Y', strtotime($row['sysdate']));
-	}
+}
 
-	// Albums
-	$result = $database->query("SELECT id, title, public, sysdate, password FROM lychee_albums WHERE title like '%$term%' OR description like '%$term%';");
-	$i		= 0;
-	while($row = $result->fetch_object()) {
+function getHashedString($password) {
 
-		// Info
-		$return['albums'][$row->id]['id']		= $row->id;
-		$return['albums'][$row->id]['title']	= $row->title;
-		$return['albums'][$row->id]['public']	= $row->public;
-		$return['albums'][$row->id]['sysdate']	= date('F Y', strtotime($row->sysdate));
-		$return['albums'][$row->id]['password']	= ($row->password=='' ? false : true);
+	# Inspired by http://alias.io/2010/01/store-passwords-safely-with-php-and-mysql/
 
-		// Thumbs
-		$result2	= $database->query("SELECT thumbUrl FROM lychee_photos WHERE album = '" . $row->id . "' " . $settings['sorting'] . " LIMIT 0, 3;");
-		$k			= 0;
-		while($row2 = $result2->fetch_object()){
-			$return['albums'][$row->id]["thumb$k"] = $row2->thumbUrl;
-			$k++;
+	# A higher $cost is more secure but consumes more processing power
+	$cost = 10;
+
+	# Create a random salt
+	if (extension_loaded('openssl')) {
+		$salt = strtr(substr(base64_encode(openssl_random_pseudo_bytes(17)),0,22), '+', '.');
+	} elseif (extension_loaded('mcrypt')) {
+		$salt = strtr(substr(base64_encode(mcrypt_create_iv(17, MCRYPT_DEV_URANDOM)),0,22), '+', '.');
+	} else {
+		$salt = "";
+		for ($i = 0; $i < 22; $i++) {
+			$salt .= substr("./ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789", mt_rand(0, 63), 1);
 		}
-
-		$i++;
-
 	}
 
-	return $return;
+	# Prefix information about the hash so PHP knows how to verify it later.
+	# "$2a$" Means we're using the Blowfish algorithm. The following two digits are the cost parameter.
+	$salt = sprintf("$2a$%02d$", $cost) . $salt;
+
+	# Hash the password with the salt
+	return crypt($password, $salt);
 
 }
 
-function update($version = '') {
+function hasPermissions($path) {
 
-	global $database, $configVersion;
+	// Check if the given path is readable and writable
+	// Both functions are also verifying that the path exists
+	if (is_readable($path)===true&&
+		is_writeable($path)===true) return true;
 
-	// Albums
-	if(!$database->query("SELECT `description` FROM `lychee_albums` LIMIT 1;"))	$database->query("ALTER TABLE `lychee_albums` ADD `description` VARCHAR( 1000 ) NULL DEFAULT ''"); // v2.0
-	if($database->query("SELECT `password` FROM `lychee_albums` LIMIT 1;"))		$database->query("ALTER TABLE `lychee_albums` CHANGE `password` `password` VARCHAR( 100 ) NULL DEFAULT ''"); // v2.0
+	return false;
 
-	// Photos
-	if($database->query("SELECT `description` FROM `lychee_photos` LIMIT 1;"))	$database->query("ALTER TABLE `lychee_photos` CHANGE `description` `description` VARCHAR( 1000 ) NULL DEFAULT ''"); // v2.0
-	if(!$database->query("SELECT `tags` FROM `lychee_photos` LIMIT 1;"))		$database->query("ALTER TABLE `lychee_photos` ADD `tags` VARCHAR( 1000 ) NULL DEFAULT ''"); // v2.1
-	$database->query("UPDATE `lychee_photos` SET url = replace(url, 'uploads/big/', ''), thumbUrl = replace(thumbUrl, 'uploads/thumb/', '')");
+}
 
-	// Settings
-	$database->query("ALTER TABLE `lychee_settings` CHANGE `value` `value` VARCHAR( 200 ) NULL DEFAULT ''"); // v2.1.1
-	$result = $database->query("SELECT `key` FROM `lychee_settings` WHERE `key` = 'dropboxKey' LIMIT 1;");
-	if ($result->num_rows===0) $database->query("INSERT INTO `lychee_settings` (`key`, `value`) VALUES ('dropboxKey', '')"); // v2.1
+function fastimagecopyresampled(&$dst_image, $src_image, $dst_x, $dst_y, $src_x, $src_y, $dst_w, $dst_h, $src_w, $src_h, $quality = 4) {
 
-	// Config
-	if ($version!==''&&$configVersion!==$version) {
-		$data = file_get_contents('../data/config.php');
-		$data = preg_replace('/\$configVersion = \'[\w. ]*\';/', "\$configVersion = '$version';", $data);
-		if (file_put_contents('../data/config.php', $data)===false) return 'Error: Could not save updated config!';
-	}
+	###
+	# Plug-and-Play fastimagecopyresampled function replaces much slower imagecopyresampled.
+	# Just include this function and change all "imagecopyresampled" references to "fastimagecopyresampled".
+	# Typically from 30 to 60 times faster when reducing high resolution images down to thumbnail size using the default quality setting.
+	# Author: Tim Eckel - Date: 09/07/07 - Version: 1.1 - Project: FreeRingers.net - Freely distributable - These comments must remain.
+	#
+	# Optional "quality" parameter (defaults is 3). Fractional values are allowed, for example 1.5. Must be greater than zero.
+	# Between 0 and 1 = Fast, but mosaic results, closer to 0 increases the mosaic effect.
+	# 1 = Up to 350 times faster. Poor results, looks very similar to imagecopyresized.
+	# 2 = Up to 95 times faster.  Images appear a little sharp, some prefer this over a quality of 3.
+	# 3 = Up to 60 times faster.  Will give high quality smooth results very close to imagecopyresampled, just faster.
+	# 4 = Up to 25 times faster.  Almost identical to imagecopyresampled for most images.
+	# 5 = No speedup. Just uses imagecopyresampled, no advantage over imagecopyresampled.
+	###
+
+	if (empty($src_image) || empty($dst_image) || $quality <= 0) { return false; }
+
+	if ($quality < 5 && (($dst_w * $quality) < $src_w || ($dst_h * $quality) < $src_h)) {
+
+		$temp = imagecreatetruecolor($dst_w * $quality + 1, $dst_h * $quality + 1);
+		imagecopyresized($temp, $src_image, 0, 0, $src_x, $src_y, $dst_w * $quality + 1, $dst_h * $quality + 1, $src_w, $src_h);
+		imagecopyresampled($dst_image, $temp, $dst_x, $dst_y, 0, 0, $dst_w, $dst_h, $dst_w * $quality, $dst_h * $quality);
+		imagedestroy($temp);
+
+	} else imagecopyresampled($dst_image, $src_image, $dst_x, $dst_y, $src_x, $src_y, $dst_w, $dst_h, $src_w, $src_h);
 
 	return true;
 

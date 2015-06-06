@@ -2,19 +2,25 @@
 
 First you have to install the following dependencies:
 
-- [CSS Optimizer](https://github.com/css/csso) `csso`
-- [UglifyJS](https://github.com/mishoo/UglifyJS2) `uglifyjs`
+- `node` [Node.js](http://nodejs.org) v0.10 or later
+- `npm` [Node Packaged Modules](https://www.npmjs.org)
+- `bower` [Bower](http://bower.io)
+- `gulp` [Gulp.js](http://gulpjs.com)
 
-These dependencies can be installed using `npm`:
+After [installing Node.js](http://nodejs.org) you can use the included `npm` package manager to install the global requirements and Lychee-dependencies with the following command:
 
-	npm install csso uglify-js -g;
-	
+	cd build/;
+	npm install -g bower gulp;
+	npm install && bower install;
+
 ### Build
 
-The Makefile is located in `etc/` and can be easily executed, using the following command. Make sure your run this from the root of Lychee:
+The Gruntfile is located in `src/` and can be easily executed using the `gulp` command.
 
-	make -f etc/Makefile
-	
-### Use uncompressed files
+### Watch for changes
 
-While developing, you might want to use the uncompressed files. This is possible by editing the `index.html`. Simply change the linked CSS and JS files. There are already out-commented link-tags for development and production.
+While developing, you might want to use the following command to watch for changes:
+
+	gulp watch
+
+`gulp` will automatically build Lychee everytime you save a file.
